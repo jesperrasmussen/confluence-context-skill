@@ -188,8 +188,16 @@ def parse_confluence_content(content: str) -> Dict[str, Any]:
     return extracted
 
 
-def prompt_for_field(field_name: str, field_type: str = "string") -> Any:
-    """Prompt user for missing field."""
+def is_interactive() -> bool:
+    """Check if running in interactive mode."""
+    return sys.stdin.isatty()
+
+
+def prompt_for_field(field_name: str, field_type: str = "string", interactive: bool = True) -> Any:
+    """Prompt user for missing field. Returns None if not interactive or user skips."""
+    if not interactive:
+        return None
+
     friendly_names = {
         "business_value": "Business Value (why this project exists)",
         "stakeholders": "Stakeholders (teams/people involved)",
@@ -204,21 +212,28 @@ def prompt_for_field(field_name: str, field_type: str = "string") -> Any:
         print("   (Enter items one per line, empty line to finish)")
         items = []
         while True:
-            item = input(f"   • ").strip()
-            if not item:
+            try:
+                item = input(f"   • ").strip()
+                if not item:
+                    break
+                items.append(item)
+            except EOFError:
                 break
-            items.append(item)
         return items if items else None
     else:
         print("   (Enter value, or press Enter to skip)")
-        return input(f"   > ").strip() or None
+        try:
+            return input(f"   > ").strip() or None
+        except EOFError:
+            return None
 
 
 def build_context_object(
     project_name: str,
     extracted: Dict[str, Any],
     confluence_config: Dict[str, str],
-    confluence_url: Optional[str] = None
+    confluence_url: Optional[str] = None,
+    interactive: bool = True
 ) -> Dict[str, Any]:
     """Build the structured context object, prompting for missing fields."""
 
@@ -235,32 +250,43 @@ def build_context_object(
     # Fill in extracted values
     context.update(extracted)
 
-    # Prompt for missing fields
-    print("\n" + "="*60)
-    print("Building Project Context")
-    print("="*60)
+    # Prompt for missing fields (only if interactive)
+    if interactive:
+        print("\n" + "="*60)
+        print("Building Project Context")
+        print("="*60)
 
-    # Business value (required)
-    if not context.get("business_value"):
-        context["business_value"] = prompt_for_field("business_value", "string")
+        # Business value (required in interactive mode)
+        if not context.get("business_value"):
+            context["business_value"] = prompt_for_field("business_value", "string", interactive)
 
-    # Stakeholders
-    if not context.get("stakeholders"):
-        stakeholders = prompt_for_field("stakeholders", "list")
-        if stakeholders:
-            context["stakeholders"] = stakeholders
+        # Stakeholders
+        if not context.get("stakeholders"):
+            stakeholders = prompt_for_field("stakeholders", "list", interactive)
+            if stakeholders:
+                context["stakeholders"] = stakeholders
 
-    # Constraints
-    if not context.get("constraints"):
-        constraints = prompt_for_field("constraints", "list")
-        if constraints:
-            context["constraints"] = constraints
+        # Constraints
+        if not context.get("constraints"):
+            constraints = prompt_for_field("constraints", "list", interactive)
+            if constraints:
+                context["constraints"] = constraints
 
-    # Business processes
-    if not context.get("business_processes"):
-        processes = prompt_for_field("business_processes", "list")
-        if processes:
-            context["business_processes"] = processes
+        # Business processes
+        if not context.get("business_processes"):
+            processes = prompt_for_field("business_processes", "list", interactive)
+            if processes:
+                context["business_processes"] = processes
+    else:
+        print("⏭️  Skipping interactive prompts (non-interactive mode)")
+        if not context.get("business_value"):
+            print("   ℹ️  Business value: (not set)")
+        if not context.get("stakeholders"):
+            print("   ℹ️  Stakeholders: (not set)")
+        if not context.get("constraints"):
+            print("   ℹ️  Constraints: (not set)")
+        if not context.get("business_processes"):
+            print("   ℹ️  Business processes: (not set)")
 
     return context
 
@@ -354,8 +380,15 @@ def main():
     print(f"📊 Extracted fields: {', '.join(extracted.keys())}\n")
 
     # Build context, prompting for missing fields
-    confluence_url = f"{confluence_config['confluence_url']}/wiki/spaces/{confluence_config['space_key']}"
-    context = build_context_object(project_name, extracted, confluence_config, confluence_url)
+    # Construct confluence URL (with space info if available)
+    confluence_url = confluence_config['confluence_url']
+    if 'space_key' in confluence_config:
+        confluence_url = f"{confluence_url}/spaces/{confluence_config['space_key']}"
+    if 'page_id' in confluence_config:
+        confluence_url = f"{confluence_url}/pages/{confluence_config['page_id']}"
+
+    interactive = is_interactive()
+    context = build_context_object(project_name, extracted, confluence_config, confluence_url, interactive)
 
     # Generate markdown
     markdown = generate_markdown_summary(context)
