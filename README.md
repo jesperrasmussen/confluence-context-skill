@@ -59,17 +59,39 @@ cat > .claude/confluence.json << 'EOF'
 {
   "confluence_url": "https://your-org.atlassian.net/wiki",
   "space_key": "PROJKEY",
-  "page_title": "Project Overview"
+  "page_title": "Project Overview",
+  "max_depth": 1
 }
 EOF
 ```
 
-**Alternative:** Use page ID directly (if you know it):
+**Configuration options:**
+
+- `confluence_url` — Base Confluence wiki URL
+- `space_key` + `page_title` — Look up starting page by space/title (OR use `page_id`)
+- `page_id` — Starting page ID directly (simpler if you know it)
+- `max_depth` — How deep to traverse the page hierarchy:
+  - `1` (default) — Current page only
+  - `2` — Include child pages (subpages)
+  - `3+` — Include deeper hierarchies
+
+**Example: Multi-page context**
+
+If your Confluence structure is:
+```
+Trade Promotion Settlements (page A)
+├── Business Processes (page B)
+├── Technical Constraints (page C)
+└── Market-Specific Rules (page D)
+```
+
+Use `max_depth: 2` to fetch A + B + C + D and merge all content into one context.
 
 ```json
 {
   "confluence_url": "https://your-org.atlassian.net/wiki",
-  "page_id": "123456789"
+  "page_id": "123456789",
+  "max_depth": 2
 }
 ```
 

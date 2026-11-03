@@ -12,9 +12,12 @@ import sys
 import re
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Set
 from subprocess import run, CalledProcessError, PIPE
 import tempfile
+import urllib.request
+import urllib.parse
+import base64
 
 
 def load_confluence_config(project_path: Path) -> Dict[str, str]:
@@ -53,45 +56,170 @@ def verify_confluence_credentials() -> bool:
     return True
 
 
-def find_page_id_by_title(space: str, page_title: str) -> Optional[str]:
-    """Look up page ID by space key and title using Confluence REST API."""
-    import urllib.request
-    import urllib.parse
-    import base64
-
-    conf_url = os.getenv("CONFLUENCE_URL", "").rstrip("/")
+def _confluence_api_auth() -> Optional[str]:
+    """Get Basic auth header for Confluence API."""
     email = os.getenv("CONFLUENCE_EMAIL")
     token = os.getenv("CONFLUENCE_API_TOKEN")
-
-    if not (conf_url and email and token):
+    if not (email and token):
         return None
-
-    # Confluence CQL query: find page by space key and title
-    cql = f"space = {space} AND title ~ \"{page_title}\""
-    api_url = f"{conf_url}/rest/api/content?cql={urllib.parse.quote(cql)}&limit=1"
-
-    # Basic auth
     auth_str = f"{email}:{token}"
     auth_bytes = base64.b64encode(auth_str.encode()).decode()
+    return f"Basic {auth_bytes}"
+
+
+def _confluence_api_request(url: str) -> Optional[Dict]:
+    """Make a Confluence REST API request."""
+    auth = _confluence_api_auth()
+    if not auth:
+        return None
 
     try:
         req = urllib.request.Request(
-            api_url,
-            headers={"Authorization": f"Basic {auth_bytes}"}
+            url,
+            headers={"Authorization": auth}
         )
         with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read())
-            if data.get("results"):
-                return data["results"][0]["id"]
+            return json.loads(response.read())
     except Exception as e:
-        print(f"⚠️  Could not look up page ID: {e}")
+        print(f"⚠️  API request failed: {e}")
+        return None
 
+
+def find_page_id_by_title(space: str, page_title: str) -> Optional[str]:
+    """Look up page ID by space key and title using Confluence REST API."""
+    conf_url = os.getenv("CONFLUENCE_URL", "").rstrip("/")
+    if not conf_url:
+        return None
+
+    cql = f"space = {space} AND title ~ \"{page_title}\""
+    api_url = f"{conf_url}/rest/api/content?cql={urllib.parse.quote(cql)}&limit=1"
+
+    data = _confluence_api_request(api_url)
+    if data and data.get("results"):
+        return data["results"][0]["id"]
     return None
 
 
+def get_page_hierarchy(page_id: str) -> Dict[str, Any]:
+    """Get page info including ancestors and children."""
+    conf_url = os.getenv("CONFLUENCE_URL", "").rstrip("/")
+    if not conf_url:
+        return {}
+
+    api_url = f"{conf_url}/rest/api/content/{page_id}?expand=ancestors,children.page"
+    return _confluence_api_request(api_url) or {}
+
+
+def traverse_page_hierarchy(
+    page_id: str,
+    max_depth: int = 2,
+    visited: Optional[Set[str]] = None,
+    current_depth: int = 0
+) -> List[str]:
+    """Traverse page hierarchy to collect related page IDs (children and siblings).
+
+    Returns list of page IDs to fetch, up to max_depth.
+    ponytail: simple BFS, no memoization of full trees. Upgrade if tree traversal becomes bottleneck.
+    """
+    if visited is None:
+        visited = set()
+
+    if page_id in visited or current_depth >= max_depth:
+        return []
+
+    visited.add(page_id)
+    pages_to_fetch = [page_id]
+
+    if current_depth >= max_depth:
+        return pages_to_fetch
+
+    try:
+        # Get page info and children
+        hierarchy = get_page_hierarchy(page_id)
+        if not hierarchy:
+            return pages_to_fetch
+
+        # Traverse children
+        children_container = hierarchy.get("children")
+        if isinstance(children_container, dict):
+            children = children_container.get("page", [])
+            for child in children:
+                if isinstance(child, dict):
+                    child_id = child.get("id")
+                    if child_id and child_id not in visited:
+                        pages_to_fetch.extend(
+                            traverse_page_hierarchy(child_id, max_depth, visited, current_depth + 1)
+                        )
+
+        # Traverse siblings (pages with same parent)
+        ancestors = hierarchy.get("ancestors", [])
+        if ancestors and current_depth == 0:  # Only get siblings at root level
+            parent_id = ancestors[-1].get("id") if ancestors else None
+            if parent_id:
+                parent_info = get_page_hierarchy(parent_id)
+                if isinstance(parent_info, dict):
+                    children_container = parent_info.get("children")
+                    if isinstance(children_container, dict):
+                        siblings = children_container.get("page", [])
+                        for sibling in siblings:
+                            if isinstance(sibling, dict):
+                                sibling_id = sibling.get("id")
+                                if sibling_id and sibling_id not in visited:
+                                    pages_to_fetch.append(sibling_id)
+    except Exception as e:
+        print(f"⚠️  Error traversing hierarchy: {e}")
+
+    return pages_to_fetch
+
+
+def _fetch_single_page(page_id: str) -> Optional[str]:
+    """Fetch a single page as Markdown using mdc."""
+    # Use a unique temporary file name
+    import uuid
+    tmp_path = f"/tmp/confluence_{uuid.uuid4().hex}.md"
+
+    try:
+        result = run(
+            ["mdc", "fetch", "--page-id", page_id, "-o", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            print(f"      ❌ mdc failed: {result.stderr.strip()[:100]}")
+            return None
+
+        # Read the file
+        try:
+            with open(tmp_path, 'r') as f:
+                content = f.read()
+                if content:
+                    print(f"      ✓ fetched {len(content)} bytes")
+                    return content
+                else:
+                    print(f"      ❌ output file is empty")
+                    return None
+        except Exception as e:
+            print(f"      ❌ could not read output: {e}")
+            return None
+    except Exception as e:
+        print(f"      ❌ {e}")
+        return None
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
+
 def fetch_confluence_markdown(conf_config: Dict[str, str]) -> str:
-    """Fetch Confluence page as Markdown using mdc command."""
-    # Determine page ID
+    """Fetch Confluence page(s) as Markdown using mdc command.
+
+    Supports single page or multi-page traversal based on config.
+    """
+    # Determine root page ID
     page_id = conf_config.get("page_id")
 
     if not page_id:
@@ -110,28 +238,34 @@ def fetch_confluence_markdown(conf_config: Dict[str, str]) -> str:
 
         print(f"   Found page ID: {page_id}")
 
-    # Fetch using mdc
-    print(f"📥 Fetching from Confluence (page ID: {page_id})...")
+    # Determine if we should traverse hierarchy
+    max_depth = int(conf_config.get("max_depth", 1))
+    if max_depth > 1:
+        print(f"🔗 Traversing hierarchy (max depth: {max_depth})...")
+        page_ids = traverse_page_hierarchy(page_id, max_depth)
+        print(f"   Found {len(page_ids)} pages to fetch")
+    else:
+        page_ids = [page_id]
 
-    with tempfile.NamedTemporaryFile(mode="w+", suffix=".md", delete=False) as tmp:
-        tmp_path = tmp.name
+    # Fetch all pages
+    print(f"📥 Fetching from Confluence ({len(page_ids)} page(s))...")
+    all_content = []
 
-    try:
-        result = run(
-            ["mdc", "fetch", "--page-id", page_id, "-o", tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+    for i, pid in enumerate(page_ids, 1):
+        print(f"   [{i}/{len(page_ids)}] Fetching page {pid}...")
+        content = _fetch_single_page(pid)
+        if content:
+            all_content.append(content)
 
-        if result.returncode != 0:
-            raise RuntimeError(f"mdc fetch failed: {result.stderr}")
+    if not all_content:
+        raise RuntimeError("Could not fetch any pages from Confluence")
 
-        with open(tmp_path) as f:
-            return f.read()
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    # Concatenate content
+    if len(all_content) > 1:
+        print(f"   ✓ Concatenating {len(all_content)} pages")
+        return "\n\n---\n\n".join(all_content)
+    else:
+        return all_content[0]
 
 
 def extract_field(content: str, field_name: str, patterns: List[str]) -> Optional[str]:

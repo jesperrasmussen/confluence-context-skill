@@ -48,7 +48,8 @@ Edit to point to your Confluence space. Use either **space + title** (script loo
 {
   "confluence_url": "https://your-org.atlassian.net/wiki",
   "space_key": "PROJKEY",
-  "page_title": "Project Overview"
+  "page_title": "Project Overview",
+  "max_depth": 1
 }
 ```
 
@@ -57,9 +58,17 @@ Or **page ID directly** (fastest):
 ```json
 {
   "confluence_url": "https://your-org.atlassian.net/wiki",
-  "page_id": "123456789"
+  "page_id": "123456789",
+  "max_depth": 1
 }
 ```
+
+**Multi-page context:** Set `max_depth` to traverse child pages:
+- `max_depth: 1` — Only the root page
+- `max_depth: 2` — Root + immediate children
+- `max_depth: 3` — Root + children + grandchildren
+
+All fetched pages are concatenated and re-parsed as one context.
 
 ### 3. Run Manually
 

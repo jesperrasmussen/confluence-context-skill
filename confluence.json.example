@@ -1,11 +1,20 @@
 {
   "confluence_url": "https://your-org.atlassian.net/wiki",
   "space_key": "MYPROJ",
-  "page_title": "Project Overview"
+  "page_title": "Project Overview",
+  "max_depth": 1
 }
 
 // Alternative: use page_id directly (simplest)
 // {
 //   "confluence_url": "https://your-org.atlassian.net/wiki",
-//   "page_id": "123456789"
+//   "page_id": "123456789",
+//   "max_depth": 2
 // }
+
+// Config options:
+// - confluence_url: Base Confluence wiki URL
+// - space_key + page_title: Look up starting page by space and title (OR use page_id)
+// - page_id: Starting page ID directly (simplest)
+// - max_depth: How deep to traverse (1=current page only, 2=children, 3=children+grandchildren)
+//   Default: 1. Increase to include children and sibling pages in context.
