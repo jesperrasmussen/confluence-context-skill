@@ -15,15 +15,32 @@ Fetches documentation from Confluence, extracts business context (stakeholders, 
 - Interactive prompting for fields that can't be auto-extracted
 - Auto-load support via hooks (when integrated into projects)
 
+## Prerequisites
+
+- `mdc` command available (from `confluence-markdown` skill)
+- Confluence API credentials as environment variables:
+  - `CONFLUENCE_URL`
+  - `CONFLUENCE_EMAIL`
+  - `CONFLUENCE_API_TOKEN`
+
 ## Configuration
 
-Each project stores Confluence config in `.claude/confluence.json`:
+Each project stores Confluence config in `.claude/confluence.json`. Two options:
 
+**Option 1: Space key + page title** (script looks up page ID):
 ```json
 {
-  "confluence_url": "https://your-confluence.atlassian.net",
+  "confluence_url": "https://your-confluence.atlassian.net/wiki",
   "space_key": "PROJ",
   "page_title": "Project Overview"
+}
+```
+
+**Option 2: Page ID directly** (simpler if you know it):
+```json
+{
+  "confluence_url": "https://your-confluence.atlassian.net/wiki",
+  "page_id": "123456789"
 }
 ```
 

@@ -1,5 +1,19 @@
 # Integration Guide
 
+## Prerequisites
+
+This skill uses the `mdc` command from the `confluence-markdown` skill. You need:
+
+1. **mdc installed** — from `confluence-markdown` skill (`command -v mdc`)
+2. **Confluence API token** — from https://id.atlassian.com/manage-profile/security/api-tokens
+3. **Environment variables set:**
+
+```bash
+export CONFLUENCE_URL="https://your-org.atlassian.net/wiki"
+export CONFLUENCE_EMAIL="your.email@example.com"
+export CONFLUENCE_API_TOKEN="your-api-token"
+```
+
 ## Setup
 
 ### 1. Copy Skill to Claude Code
@@ -28,13 +42,22 @@ mkdir -p /path/to/project/.claude
 cp confluence.json.example /path/to/project/.claude/confluence.json
 ```
 
-Edit to point to your Confluence space:
+Edit to point to your Confluence space. Use either **space + title** (script looks up ID):
 
 ```json
 {
-  "confluence_url": "https://your-org.atlassian.net",
+  "confluence_url": "https://your-org.atlassian.net/wiki",
   "space_key": "PROJKEY",
   "page_title": "Project Overview"
+}
+```
+
+Or **page ID directly** (fastest):
+
+```json
+{
+  "confluence_url": "https://your-org.atlassian.net/wiki",
+  "page_id": "123456789"
 }
 ```
 

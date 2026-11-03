@@ -26,7 +26,30 @@ cp confluence_context.py ~/.claude/skills/confluence-context
 chmod +x ~/.claude/skills/confluence-context
 ```
 
-### 2. Configure Your Project
+### 2. Set Confluence Credentials
+
+The skill uses the `mdc` command (from `confluence-markdown` skill) to fetch pages. Set these environment variables:
+
+```bash
+export CONFLUENCE_URL="https://your-org.atlassian.net/wiki"
+export CONFLUENCE_EMAIL="your.email@example.com"
+export CONFLUENCE_API_TOKEN="your-api-token"
+```
+
+**Get an API token:**
+1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
+2. Click "Create API token"
+3. Copy and store securely
+
+**To persist these** (add to `.zshrc`, `.bashrc`, etc.):
+
+```bash
+export CONFLUENCE_URL="https://your-org.atlassian.net/wiki"
+export CONFLUENCE_EMAIL="your.email@example.com"
+export CONFLUENCE_API_TOKEN="your-api-token"
+```
+
+### 3. Configure Your Project
 
 In your project directory, create `.claude/confluence.json`:
 
@@ -34,14 +57,23 @@ In your project directory, create `.claude/confluence.json`:
 mkdir -p .claude
 cat > .claude/confluence.json << 'EOF'
 {
-  "confluence_url": "https://your-org.atlassian.net",
+  "confluence_url": "https://your-org.atlassian.net/wiki",
   "space_key": "PROJKEY",
   "page_title": "Project Overview"
 }
 EOF
 ```
 
-### 3. Run the Skill
+**Alternative:** Use page ID directly (if you know it):
+
+```json
+{
+  "confluence_url": "https://your-org.atlassian.net/wiki",
+  "page_id": "123456789"
+}
+```
+
+### 4. Run the Skill
 
 From Claude Code:
 

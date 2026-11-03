@@ -1,5 +1,11 @@
 {
-  "confluence_url": "https://your-org.atlassian.net",
+  "confluence_url": "https://your-org.atlassian.net/wiki",
   "space_key": "MYPROJ",
   "page_title": "Project Overview"
 }
+
+// Alternative: use page_id directly (simplest)
+// {
+//   "confluence_url": "https://your-org.atlassian.net/wiki",
+//   "page_id": "123456789"
+// }

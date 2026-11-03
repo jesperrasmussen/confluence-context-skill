@@ -13,7 +13,8 @@ import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Any
-from subprocess import run, CalledProcessError
+from subprocess import run, CalledProcessError, PIPE
+import tempfile
 
 
 def load_confluence_config(project_path: Path) -> Dict[str, str]:
@@ -34,16 +35,103 @@ def load_confluence_config(project_path: Path) -> Dict[str, str]:
         return json.load(f)
 
 
-def fetch_confluence_markdown(url: str, space: str, page: str) -> str:
-    """Fetch Confluence page as Markdown using confluence-markdown capability."""
-    # This would call the confluence-markdown tool
-    # For now, returning placeholder - in real implementation would use subprocess
-    # to invoke Claude Code's confluence-markdown skill
-    print(f"📖 Fetching from Confluence: {space}/{page}...")
+def verify_confluence_credentials() -> bool:
+    """Check that Confluence credentials are set."""
+    required = ["CONFLUENCE_URL", "CONFLUENCE_EMAIL", "CONFLUENCE_API_TOKEN"]
+    missing = [var for var in required if not os.getenv(var)]
 
-    # The actual implementation would use Claude's confluence-markdown tool
-    # This is a placeholder showing the expected interface
-    return f"# {page}\n\nContent from {space} space."
+    if missing:
+        print("❌ Missing Confluence credentials:")
+        for var in missing:
+            print(f"   • {var}")
+        print("\nSet these environment variables, then try again:")
+        print("   export CONFLUENCE_URL='https://your-org.atlassian.net/wiki'")
+        print("   export CONFLUENCE_EMAIL='your.email@example.com'")
+        print("   export CONFLUENCE_API_TOKEN='your-api-token-from-atlassian'")
+        print("\nGet an API token at: https://id.atlassian.com/manage-profile/security/api-tokens")
+        return False
+    return True
+
+
+def find_page_id_by_title(space: str, page_title: str) -> Optional[str]:
+    """Look up page ID by space key and title using Confluence REST API."""
+    import urllib.request
+    import urllib.parse
+    import base64
+
+    conf_url = os.getenv("CONFLUENCE_URL", "").rstrip("/")
+    email = os.getenv("CONFLUENCE_EMAIL")
+    token = os.getenv("CONFLUENCE_API_TOKEN")
+
+    if not (conf_url and email and token):
+        return None
+
+    # Confluence CQL query: find page by space key and title
+    cql = f"space = {space} AND title ~ \"{page_title}\""
+    api_url = f"{conf_url}/rest/api/content?cql={urllib.parse.quote(cql)}&limit=1"
+
+    # Basic auth
+    auth_str = f"{email}:{token}"
+    auth_bytes = base64.b64encode(auth_str.encode()).decode()
+
+    try:
+        req = urllib.request.Request(
+            api_url,
+            headers={"Authorization": f"Basic {auth_bytes}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read())
+            if data.get("results"):
+                return data["results"][0]["id"]
+    except Exception as e:
+        print(f"⚠️  Could not look up page ID: {e}")
+
+    return None
+
+
+def fetch_confluence_markdown(conf_config: Dict[str, str]) -> str:
+    """Fetch Confluence page as Markdown using mdc command."""
+    # Determine page ID
+    page_id = conf_config.get("page_id")
+
+    if not page_id:
+        # Look up by space and title
+        space = conf_config.get("space_key")
+        title = conf_config.get("page_title")
+
+        if not (space and title):
+            raise ValueError("Config must have either 'page_id' or both 'space_key' and 'page_title'")
+
+        print(f"📖 Looking up page ID: {space}/{title}...")
+        page_id = find_page_id_by_title(space, title)
+
+        if not page_id:
+            raise ValueError(f"Could not find page: {space}/{title}")
+
+        print(f"   Found page ID: {page_id}")
+
+    # Fetch using mdc
+    print(f"📥 Fetching from Confluence (page ID: {page_id})...")
+
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".md", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        result = run(
+            ["mdc", "fetch", "--page-id", page_id, "-o", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"mdc fetch failed: {result.stderr}")
+
+        with open(tmp_path) as f:
+            return f.read()
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def extract_field(content: str, field_name: str, patterns: List[str]) -> Optional[str]:
@@ -249,16 +337,17 @@ def main():
     # Load configuration
     confluence_config = load_confluence_config(project_path)
 
-    # Fetch content from Confluence
-    try:
-        content = fetch_confluence_markdown(
-            confluence_config["confluence_url"],
-            confluence_config["space_key"],
-            confluence_config["page_title"]
-        )
-    except Exception as e:
-        print(f"⚠️  Could not fetch from Confluence: {e}")
+    # Check credentials
+    if not verify_confluence_credentials():
+        print("\n⚠️  Confluence credentials not configured. Skipping fetch.")
         content = ""
+    else:
+        # Fetch content from Confluence
+        try:
+            content = fetch_confluence_markdown(confluence_config)
+        except Exception as e:
+            print(f"⚠️  Could not fetch from Confluence: {e}")
+            content = ""
 
     # Parse content
     extracted = parse_confluence_content(content)
