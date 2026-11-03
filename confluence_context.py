@@ -19,6 +19,12 @@ import urllib.request
 import urllib.parse
 import base64
 
+try:
+    from anthropic import Anthropic
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+
 
 def load_confluence_config(project_path: Path) -> Dict[str, str]:
     """Load Confluence configuration from .claude/confluence.json"""
@@ -139,17 +145,26 @@ def traverse_page_hierarchy(
         if not hierarchy:
             return pages_to_fetch
 
+        # Helper to extract page list from Confluence API response
+        def get_pages_from_children(children_container):
+            """Extract page list from children.page structure."""
+            if not isinstance(children_container, dict):
+                return []
+            page_container = children_container.get("page")
+            if isinstance(page_container, dict):
+                return page_container.get("results", [])
+            elif isinstance(page_container, list):
+                return page_container
+            return []
+
         # Traverse children
         children_container = hierarchy.get("children")
-        if isinstance(children_container, dict):
-            children = children_container.get("page", [])
-            for child in children:
-                if isinstance(child, dict):
-                    child_id = child.get("id")
-                    if child_id and child_id not in visited:
-                        pages_to_fetch.extend(
-                            traverse_page_hierarchy(child_id, max_depth, visited, current_depth + 1)
-                        )
+        for child in get_pages_from_children(children_container):
+            child_id = child.get("id")
+            if child_id and child_id not in visited:
+                pages_to_fetch.extend(
+                    traverse_page_hierarchy(child_id, max_depth, visited, current_depth + 1)
+                )
 
         # Traverse siblings (pages with same parent)
         ancestors = hierarchy.get("ancestors", [])
@@ -158,14 +173,10 @@ def traverse_page_hierarchy(
             if parent_id:
                 parent_info = get_page_hierarchy(parent_id)
                 if isinstance(parent_info, dict):
-                    children_container = parent_info.get("children")
-                    if isinstance(children_container, dict):
-                        siblings = children_container.get("page", [])
-                        for sibling in siblings:
-                            if isinstance(sibling, dict):
-                                sibling_id = sibling.get("id")
-                                if sibling_id and sibling_id not in visited:
-                                    pages_to_fetch.append(sibling_id)
+                    for sibling in get_pages_from_children(parent_info.get("children")):
+                        sibling_id = sibling.get("id")
+                        if sibling_id and sibling_id not in visited:
+                            pages_to_fetch.append(sibling_id)
     except Exception as e:
         print(f"⚠️  Error traversing hierarchy: {e}")
 
@@ -277,30 +288,90 @@ def extract_field(content: str, field_name: str, patterns: List[str]) -> Optiona
     return None
 
 
-def parse_confluence_content(content: str) -> Dict[str, Any]:
-    """Parse Confluence markdown to extract context fields."""
+def analyze_content_with_claude(content: str, project_name: str) -> Dict[str, Any]:
+    """Use Claude to intelligently extract business context from Confluence content."""
+    if not CLAUDE_AVAILABLE:
+        return {}
 
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("   ℹ️  ANTHROPIC_API_KEY not set, skipping Claude analysis")
+        return {}
+
+    client = Anthropic(api_key=api_key)
+
+    prompt = f"""Analyze the following Confluence documentation for the project "{project_name}" and extract the business context.
+
+Return a JSON object with these fields:
+- business_value (string): Why this project exists, its strategic importance, and the problem it solves
+- stakeholders (array): Teams, departments, or roles involved in this project
+- constraints (array): Business, technical, timeline, or regulatory constraints
+- business_processes (array): Key processes this project enables, supports, or changes
+
+Only include information that's clearly present in the documentation. If a field is not mentioned, use null or empty array.
+
+Be concise but specific. For arrays, return 3-5 items maximum.
+
+CONFLUENCE CONTENT:
+---
+{content[:8000]}  # Limit to first 8000 chars to stay within token budget
+---
+
+Return only valid JSON, no markdown formatting."""
+
+    try:
+        print("   🤖 Analyzing content with Claude...")
+        message = client.messages.create(
+            model="claude-opus-5-5",
+            max_tokens=1024,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+
+        # Parse the response
+        response_text = message.content[0].text
+        # Try to extract JSON if Claude wrapped it in markdown
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0]
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0]
+
+        result = json.loads(response_text)
+        print("   ✓ Claude extracted context")
+        return result
+
+    except Exception as e:
+        print(f"   ⚠️  Claude analysis failed: {e}")
+        return {}
+
+
+def parse_confluence_content(content: str, project_name: str) -> Dict[str, Any]:
+    """Parse Confluence content using Claude for intelligent extraction."""
+    # Try Claude first if available
+    extracted = analyze_content_with_claude(content, project_name)
+    if extracted:
+        return extracted
+
+    # Fallback to regex if Claude unavailable
+    print("   ⏭️  Falling back to regex extraction")
     patterns = {
         "business_value": [
             r"## Business Value\s*\n(.*?)(?=##|\Z)",
             r"## Why\s*\n(.*?)(?=##|\Z)",
             r"## Strategic Impact\s*\n(.*?)(?=##|\Z)",
-            r"### Business Value\s*\n(.*?)(?=###|\Z)",
         ],
         "stakeholders": [
             r"## Stakeholders?\s*\n(.*?)(?=##|\Z)",
             r"## Teams?\s*\n(.*?)(?=##|\Z)",
-            r"### Stakeholders?\s*\n(.*?)(?=###|\Z)",
         ],
         "constraints": [
             r"## Constraints?\s*\n(.*?)(?=##|\Z)",
-            r"## Timeline\s*\n(.*?)(?=##|\Z)",
-            r"### Constraints?\s*\n(.*?)(?=###|\Z)",
+            r"## Requirements\s*\n(.*?)(?=##|\Z)",
         ],
         "business_processes": [
             r"## (Business )?Processes?\s*\n(.*?)(?=##|\Z)",
-            r"## What (this|the project) (enables?|does)\s*\n(.*?)(?=##|\Z)",
-            r"### (Business )?Processes?\s*\n(.*?)(?=###|\Z)",
+            r"## Features?\s*\n(.*?)(?=##|\Z)",
         ],
     }
 
@@ -308,16 +379,14 @@ def parse_confluence_content(content: str) -> Dict[str, Any]:
     for field, field_patterns in patterns.items():
         value = extract_field(content, field, field_patterns)
         if value:
-            # Clean up extracted content
             value = re.sub(r'\n\s*\n', '\n', value).strip()
-            # For list fields, try to parse as bullet points
             if field in ["stakeholders", "constraints", "business_processes"]:
                 lines = [line.strip().lstrip('- ').lstrip('* ')
                         for line in value.split('\n')
                         if line.strip() and not line.strip().startswith('#')]
-                extracted[field] = [l for l in lines if l][:10]  # Limit to 10 items
+                extracted[field] = [l for l in lines if l][:5]
             else:
-                extracted[field] = value[:500]  # Limit text fields
+                extracted[field] = value[:500]
 
     return extracted
 
@@ -510,8 +579,8 @@ def main():
             content = ""
 
     # Parse content
-    extracted = parse_confluence_content(content)
-    print(f"📊 Extracted fields: {', '.join(extracted.keys())}\n")
+    extracted = parse_confluence_content(content, project_name)
+    print(f"📊 Extracted fields: {', '.join(extracted.keys()) if extracted else '(none)'}\n")
 
     # Build context, prompting for missing fields
     # Construct confluence URL (with space info if available)
