@@ -17,11 +17,17 @@ Fetches documentation from Confluence, extracts business context (stakeholders, 
 
 ## Prerequisites
 
+**Required:**
 - `mdc` command available (from `confluence-markdown` skill)
 - Confluence API credentials as environment variables:
   - `CONFLUENCE_URL`
   - `CONFLUENCE_EMAIL`
   - `CONFLUENCE_API_TOKEN`
+
+**Optional but recommended:**
+- `ANTHROPIC_API_KEY` environment variable
+- `anthropic` Python package (`pip3 install anthropic`)
+- Enables intelligent Claude-powered context extraction instead of regex
 
 ## Configuration
 

@@ -1,0 +1,5 @@
+# Optional dependencies for enhanced context extraction
+# Install with: pip3 install -r requirements.txt
+
+# Claude-powered intelligent analysis
+anthropic>=0.28.0

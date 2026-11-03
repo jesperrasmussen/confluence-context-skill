@@ -24,11 +24,16 @@ cd /path/to/this/project
 # Copy skill to Claude Code global skills
 cp confluence_context.py ~/.claude/skills/confluence-context
 chmod +x ~/.claude/skills/confluence-context
+
+# Install optional dependencies for Claude-powered extraction
+pip3 install anthropic
 ```
 
-### 2. Set Confluence Credentials
+### 2. Set Credentials
 
-The skill uses the `mdc` command (from `confluence-markdown` skill) to fetch pages. Set these environment variables:
+**Confluence (required):**
+
+The skill uses the `mdc` command to fetch pages. Set these environment variables:
 
 ```bash
 export CONFLUENCE_URL="https://your-org.atlassian.net/wiki"
@@ -36,17 +41,25 @@ export CONFLUENCE_EMAIL="your.email@example.com"
 export CONFLUENCE_API_TOKEN="your-api-token"
 ```
 
-**Get an API token:**
-1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
-2. Click "Create API token"
-3. Copy and store securely
+Get an API token at: https://id.atlassian.com/manage-profile/security/api-tokens
 
-**To persist these** (add to `.zshrc`, `.bashrc`, etc.):
+**Claude AI (optional, recommended):**
+
+For intelligent context extraction instead of regex matching, set:
+
+```bash
+export ANTHROPIC_API_KEY="your-anthropic-api-key"
+```
+
+Get an API key at: https://console.anthropic.com/
+
+**To persist all credentials** (add to `.zshrc`, `.bashrc`, etc.):
 
 ```bash
 export CONFLUENCE_URL="https://your-org.atlassian.net/wiki"
 export CONFLUENCE_EMAIL="your.email@example.com"
-export CONFLUENCE_API_TOKEN="your-api-token"
+export CONFLUENCE_API_TOKEN="your-confluence-token"
+export ANTHROPIC_API_KEY="your-anthropic-key"
 ```
 
 ### 3. Configure Your Project
@@ -218,13 +231,32 @@ The skill intelligently merges changes:
 ## How It Works
 
 1. **Reads config** from `.claude/confluence.json`
-2. **Fetches** the Confluence page as Markdown
-3. **Parses** with regex patterns to find context sections
-4. **Extracts** structured fields (business value, stakeholders, etc.)
-5. **Prompts** for any missing required fields
-6. **Saves** JSON (for tools) and Markdown (for humans)
+2. **Traverses** Confluence page hierarchy (respecting `max_depth`)
+3. **Fetches** all pages as Markdown
+4. **Analyzes** with Claude AI to extract business context, or falls back to regex
+5. **Structures** into JSON (business value, stakeholders, constraints, processes)
+6. **Prompts** for any missing fields (interactive mode only)
+7. **Saves** JSON (for tools) and Markdown (for humans)
 
-The extraction is heuristic-based, so your Confluence page should follow standard section headings. It handles common variations like `## Business Value`, `### Why`, `## Strategic Impact`, etc.
+### Content Analysis
+
+**With Claude AI (recommended):**
+- Set `ANTHROPIC_API_KEY` and install `pip3 install anthropic`
+- Claude reads the full Confluence content and intelligently determines context
+- Works with unstructured documentation (no specific heading format required)
+- More accurate extraction from complex, long-form documentation
+
+**Without Claude (fallback):**
+- Uses regex patterns to find standard section headings
+- Requires your Confluence pages to use consistent structure like:
+  ```
+  ## Business Value
+  ...
+  ## Stakeholders
+  ...
+  ## Constraints
+  ...
+  ```
 
 ## Troubleshooting
 
