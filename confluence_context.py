@@ -293,12 +293,17 @@ def analyze_content_with_claude(content: str, project_name: str) -> Dict[str, An
     if not CLAUDE_AVAILABLE:
         return {}
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    # Support both direct API key and gateway auth token
+    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
     if not api_key:
-        print("   ℹ️  ANTHROPIC_API_KEY not set, skipping Claude analysis")
+        print("   ℹ️  ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN not set, skipping Claude analysis")
         return {}
 
-    client = Anthropic(api_key=api_key)
+    # Support custom base URL for AI gateway
+    base_url = os.getenv("ANTHROPIC_BASE_URL")
+
+    client = Anthropic(api_key=api_key, base_url=base_url) if base_url else Anthropic(api_key=api_key)
+    print(f"   🤖 Analyzing with Claude{'@gateway' if base_url else ''}...")
 
     prompt = f"""Analyze the following Confluence documentation for the project "{project_name}" and extract the business context.
 
