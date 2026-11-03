@@ -538,6 +538,108 @@ def format_list(items: List[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def build_graphify_graph(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert project context to Graphify graph format.
+
+    Returns a graph structure compatible with Graphify's graph.json schema.
+    ponytail: simple node/edge structure without complex clustering.
+    """
+    nodes = []
+    edges = []
+    node_id = 0
+
+    # Root project node
+    project_node_id = node_id
+    nodes.append({
+        "id": node_id,
+        "type": "Project",
+        "label": context.get("project_name", "Unknown Project"),
+        "properties": {
+            "business_value": context.get("business_value", ""),
+            "last_updated": context.get("last_updated", ""),
+            "source": "confluence-context-skill"
+        },
+        "confidence": "EXTRACTED"
+    })
+    node_id += 1
+
+    # Stakeholder nodes
+    stakeholder_ids = []
+    for stakeholder in context.get("stakeholders", []):
+        stakeholder_ids.append(node_id)
+        nodes.append({
+            "id": node_id,
+            "type": "Stakeholder",
+            "label": stakeholder,
+            "properties": {},
+            "confidence": "EXTRACTED"
+        })
+        edges.append({
+            "source": project_node_id,
+            "target": node_id,
+            "type": "hasStakeholder",
+            "confidence": "EXTRACTED"
+        })
+        node_id += 1
+
+    # Constraint nodes
+    for constraint in context.get("constraints", []):
+        nodes.append({
+            "id": node_id,
+            "type": "Constraint",
+            "label": constraint,
+            "properties": {},
+            "confidence": "EXTRACTED"
+        })
+        edges.append({
+            "source": project_node_id,
+            "target": node_id,
+            "type": "hasConstraint",
+            "confidence": "EXTRACTED"
+        })
+        node_id += 1
+
+    # Business process nodes
+    for process in context.get("business_processes", []):
+        nodes.append({
+            "id": node_id,
+            "type": "BusinessProcess",
+            "label": process,
+            "properties": {},
+            "confidence": "EXTRACTED"
+        })
+        edges.append({
+            "source": project_node_id,
+            "target": node_id,
+            "type": "enables",
+            "confidence": "EXTRACTED"
+        })
+        node_id += 1
+
+    return {
+        "schema_version": "1.0",
+        "graphify_version": "0.0.1",
+        "nodes": nodes,
+        "edges": edges,
+        "metadata": {
+            "source": "confluence-context-skill",
+            "extracted_at": context.get("last_updated", ""),
+            "project": context.get("project_name", "")
+        }
+    }
+
+
+def save_graphify_graph(project_path: Path, graph: Dict[str, Any]) -> None:
+    """Save Graphify graph to .claude/graph.json."""
+    claude_dir = project_path / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+
+    graph_path = claude_dir / "graph.json"
+    with open(graph_path, 'w') as f:
+        json.dump(graph, f, indent=2)
+    print(f"✅ Saved Graphify graph: {graph_path}")
+
+
 def save_context(project_path: Path, context: Dict[str, Any], markdown: str) -> None:
     """Save context object and markdown summary."""
     claude_dir = project_path / ".claude"
@@ -604,8 +706,13 @@ def main():
     # Save
     save_context(project_path, context, markdown)
 
+    # Generate and save Graphify graph
+    graph = build_graphify_graph(context)
+    save_graphify_graph(project_path, graph)
+
     print("\n✨ Context extraction complete!")
     print(f"\nTo use this in agents, reference: .claude/project-context.json")
+    print(f"For Graphify integration, use: .claude/graph.json")
 
 
 if __name__ == "__main__":
